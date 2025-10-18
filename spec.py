@@ -111,6 +111,21 @@ POLICIES_MD = """# Minimal Policies (agents must obey)
 - Tests/Verification: Every task must include runnable verification steps (commands, queries, or API calls).
 """
 
+START_MD = """# START (Agent Kickoff)
+
+Use **spec/prompts.md** as the authoritative, binding instructions. Do not deviate.
+
+Steps:
+1) Read the design list in `spec/prompts.md`.
+2) Output first: `PLAN: <N> tasks, ~<T>h each, reason: <short rationale>`.
+3) Generate tasks under `spec/tasks/` using `spec/template.task.md` and update `spec/index.yml`.
+4) If you cannot write files, return each file as a Markdown code block prefixed with its exact path.
+
+Boundaries:
+- Do not modify `spec/template.task.md`, `spec/prompts.md`, or `spec/policies.md` unless asked.
+- Respect `spec/policies.md`. Reuse existing services/patterns; do not invent endpoints beyond the design.
+"""
+
 # ---------- Helpers ----------
 
 
@@ -154,6 +169,8 @@ def init_scaffold(force=False):
         created.append("spec/prompts.md")
     if safe_write("spec/policies.md", POLICIES_MD, force):
         created.append("spec/policies.md")
+    if safe_write("spec/START.md", START_MD, force):
+        created.append("spec/START.md")
     return created
 
 
@@ -268,8 +285,9 @@ Minimal Spec System — User Guide
 2) Register a design doc (append to prompts; add to index.yml):
    spec.py add docs/design/Trusted\\ Managers\\ Mechanism.md
 
-3) Hand this prompt to your agent (copies the current planning prompt):
-   spec.py prompt
+3) Kick off an agent:
+   - Point it to spec/START.md or spec/prompts.md
+   - Or print the prompt:  spec.py prompt
 
 4) The agent will:
    - Read the design doc(s) listed in spec/prompts.md
@@ -323,7 +341,7 @@ Examples:
     p_init.add_argument(
         "--force",
         action="store_true",
-        help="overwrite helper files (index.yml, template.task.md, prompts.md, policies.md). never touches spec/tasks/",
+        help="overwrite helper files (index.yml, template.task.md, prompts.md, policies.md, START.md). never touches spec/tasks/",
     )
     p_init.set_defaults(func=cmd_init)
 
