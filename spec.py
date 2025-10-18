@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# spec.py - minimal spec scaffold & design registrar (with built-in agent guides)
+# spec.py - minimal spec scaffold & design registrar (with planning/execution guides)
 
 import argparse, os, sys
 
@@ -17,7 +17,11 @@ settings:
   auto_execute_after_planning: false   # if true, start implementation immediately after planning
   next_task_loop: manual               # "manual" or "auto"
   require_owner_for_doing: false       # if true, must set 'owner' before switching a task to 'doing'
-  branch_naming: "feat/{id}-{slug}"    # hint for agents (optional)
+  branch_naming: "feat/{id}-{slug}"    # hint/pattern for branch names
+  enforce_branching: true              # if true, agent must refuse to commit on protected branches
+  protected_branches: ["main", "master", "develop"]
+  commit_message_template: "{id}: {title}"
+  pr_title_template: "{id}: {title}"
 """
 
 TEMPLATE_TASK_MD = """---
@@ -117,11 +121,64 @@ Read these design document(s):
 
 POLICIES_MD = """# Minimal Policies (agents must obey)
 
-- Security/Privacy: Only authorized users may access private location/manager data.
-- Reuse: Use existing auth, SSE, logging/auditing, and controller patterns.
-- No New Frameworks: Stick to the project stack; do not introduce new libs without explicit approval.
-- API Scope: Keep endpoints private/internal exactly as in the design document(s).
-- Tests/Verification: Every task must include runnable verification steps (commands, queries, or API calls).
+## Scope & Authority
+- This file is **binding** for all work. Do not deviate.
+- When in doubt, ask or propose a small change in a separate task.
+
+## Security & Privacy
+- Principle of least privilege. Touch only files/services required by the task.
+- Never commit secrets or tokens. Use env vars or the repo’s secret manager.
+- Do not log PII/credentials. Redact sensitive fields in logs/errors.
+- Private data must remain private; follow the design’s access rules exactly.
+
+## Dependencies & Tools
+- **No new frameworks/libs** without explicit approval. Prefer stdlib/existing deps.
+- Pin versions and update lockfiles. Avoid global/system installs.
+- Do not modify CI/CD config unless the task explicitly says so.
+
+## Code & Git Hygiene
+- Follow `spec/settings.yml` for branching (branch pattern, protected branches).
+- Small, atomic commits. Include task ID in commit messages/PR titles.
+- Don’t push directly to protected branches.
+
+## API, Schemas & Migrations
+- Backward compatible by default. Additive changes first; breaking changes require explicit approval.
+- Database/schema migrations must be reversible and **idempotent**.
+- Separate data migrations from schema migrations where possible.
+
+## Testing & Verification
+- Every task must include runnable verification steps (commands or API calls).
+- Add/update tests at the appropriate level (unit/integration/e2e) to cover acceptance criteria.
+- Tests must pass locally (or in the provided runner) before marking `done`.
+
+## Observability & Ops
+- Log at appropriate levels; no secrets/PII in logs.
+- Prefer metric/trace hooks only if the project already uses them.
+- Use feature flags or configuration, **not** hard-coded constants, for toggles.
+
+## Performance & Reliability
+- Respect timeouts and retries; avoid infinite waits.
+- Keep operations idempotent where applicable (especially APIs/tasks).
+- Mind basic perf budgets (avoid O(n^2) on large inputs; stream for big files).
+
+## UX / Accessibility / i18n (if user-facing)
+- Don’t regress accessibility (labels, contrast, keyboard navigation).
+- Keep copy externalized if the project already uses i18n.
+
+## Licensing & Attribution
+- Use compatible licenses only; preserve existing NOTICE/LICENSE files.
+- Attribute third-party code as required by its license.
+
+## External Calls & AI Use
+- No new outbound network calls, third-party APIs, or AI services without approval.
+- If an LLM is used inside the project, **never** send secrets/PII and follow its safety constraints.
+
+## Documentation
+- Update any touched README/config docs when behavior changes.
+- Record notable decisions/limitations in the task’s Notes section.
+
+## Project-Specific Additions
+- (Add bullets here as the repo grows; keep this file under one page.)
 """
 
 START_MD = """# START (Agent Kickoff)
@@ -145,7 +202,9 @@ Follow these steps exactly.
 
 0) Read `spec/settings.yml`.
    - If `settings.require_owner_for_doing: true`, set `owner` in the task file before switching to `doing`.
-   - Branch hint: use `settings.branch_naming` (e.g., feat/{id}-slug).
+   - **Branching is mandatory if `settings.enforce_branching: true`.**
+   - Branch pattern hint: `settings.branch_naming` (e.g., feat/{id}-{slug}).
+   - Protected branches: `settings.protected_branches` (NEVER commit here).
 
 1) Select a task:
    - Read `spec/index.yml` and pick the first `status: todo` whose `deps` are all `done`.
@@ -155,24 +214,36 @@ Follow these steps exactly.
    - If required by settings, set `owner: <name>`.
    - Change `status: doing`.
 
-3) Implement per the task’s Summary + Acceptance Criteria.
+3) **Create a working branch (REQUIRED when enforce_branching = true):**
+   - Compute `<slug>` from the task title (lowercase, hyphenated, alnum+hyphen).
+   - Branch name = `settings.branch_naming` with `{id}` and `{slug}` replaced.
+   - Detect current branch. If it is in `protected_branches`, STOP and output the shell command to create/switch:
+     - `git checkout -b <branch>` (if new) OR `git switch <branch>` (if exists).
+   - If you cannot run shell commands, **return the exact commands** to run as a fenced code block.
+
+4) Implement per the task’s Summary + Acceptance Criteria.
    - Reuse existing services/patterns. Do not invent endpoints beyond the design.
    - Keep changes scoped to the task.
 
-4) Tests & Verification:
+5) Tests & Verification:
    - Add/adjust tests as required.
    - Run the **Verification** steps from the task and ensure they pass.
 
-5) Complete:
+6) Commit:
+   - Commit message = `settings.commit_message_template` with `{id}` and `{title}` replaced.
+   - If on a protected branch, STOP and output the correct branch/switch commands instead.
+
+7) Complete:
    - Check off Acceptance Criteria in the task file.
    - Flip `status: done` when verification passes.
    - Update `spec/index.yml` entry for `<ID>` with the final `status` (and `owner` if used).
 
-6) Loop behavior (from settings):
+8) Loop behavior (from settings):
    - If `settings.next_task_loop: auto`, repeat from step 1.
    - If `manual`, STOP and wait.
 
-If you cannot write files, return each changed file as a Markdown code block with its exact repo path.
+**If you cannot write files or run shell:**
+Return each changed file and each required shell command as Markdown code blocks with exact repo paths/commands.
 """
 
 # ---------- Helpers ----------
@@ -289,39 +360,76 @@ def update_prompts_with_designs(designs):
 
 
 def load_settings():
-    # very lightweight parse for booleans/strings from spec/settings.yml
     if not os.path.exists("spec/settings.yml"):
         return {}
-    s = read_text("spec/settings.yml").splitlines()
-    out = {}
-    for line in s:
-        t = line.strip()
-        if t.startswith("auto_execute_after_planning:"):
-            out["auto_execute_after_planning"] = "true" in t.lower()
-        elif t.startswith("next_task_loop:"):
-            out["next_task_loop"] = t.split(":", 1)[1].strip()
-        elif t.startswith("require_owner_for_doing:"):
-            out["require_owner_for_doing"] = "true" in t.lower()
-        elif t.startswith("branch_naming:"):
-            out["branch_naming"] = t.split(":", 1)[1].strip().strip('"')
+    lines = read_text("spec/settings.yml").splitlines()
+    out, in_block = {}, False
+    for line in lines:
+        s = line.strip()
+        if s.startswith("settings:"):
+            in_block = True
+            continue
+        if not in_block or s == "" or s.startswith("#"):
+            continue
+        # simple key: value parser
+        if ":" in s:
+            key, val = s.split(":", 1)
+            key = key.strip()
+            val = val.strip()
+            if (
+                key == "auto_execute_after_planning"
+                or key == "require_owner_for_doing"
+                or key == "enforce_branching"
+            ):
+                out[key] = val.lower().startswith("true")
+            elif key == "next_task_loop":
+                out[key] = val
+            elif (
+                key == "branch_naming"
+                or key == "commit_message_template"
+                or key == "pr_title_template"
+            ):
+                out[key] = val.strip('"')
+            elif key == "protected_branches":
+                # parse ["a","b"] or [a, b] or comma string
+                val = val.strip()
+                if val.startswith("[") and val.endswith("]"):
+                    inner = val[1:-1].strip()
+                    parts = [
+                        p.strip().strip('"').strip("'")
+                        for p in inner.split(",")
+                        if p.strip()
+                    ]
+                    out[key] = [p for p in parts if p]
+                else:
+                    parts = [p.strip() for p in val.split(",")]
+                    out[key] = [p for p in parts if p]
     return out
 
 
 def save_settings(values):
-    # overwrite settings.yml with merged values
     current = {
         "auto_execute_after_planning": False,
         "next_task_loop": "manual",
         "require_owner_for_doing": False,
         "branch_naming": "feat/{id}-{slug}",
+        "enforce_branching": True,
+        "protected_branches": ["main", "master", "develop"],
+        "commit_message_template": "{id}: {title}",
+        "pr_title_template": "{id}: {title}",
     }
     current.update(values or {})
+    pb = ", ".join(f'"{b}"' for b in current["protected_branches"])
     body = f"""# Minimal execution settings for agents
 settings:
   auto_execute_after_planning: {"true" if current["auto_execute_after_planning"] else "false"}
   next_task_loop: {current["next_task_loop"]}
   require_owner_for_doing: {"true" if current["require_owner_for_doing"] else "false"}
   branch_naming: "{current["branch_naming"]}"
+  enforce_branching: {"true" if current["enforce_branching"] else "false"}
+  protected_branches: [{pb}]
+  commit_message_template: "{current["commit_message_template"]}"
+  pr_title_template: "{current["pr_title_template"]}"
 """
     write_text("spec/settings.yml", body)
 
@@ -366,7 +474,6 @@ def cmd_prompt(_args):
 
 
 def cmd_guide(_args):
-    """Print a concise user guide (human-facing instructions)."""
     guide = f"""\
 Minimal Spec System — User Guide
 
@@ -377,21 +484,18 @@ Minimal Spec System — User Guide
    spec.py add docs/design/Trusted\\ Managers\\ Mechanism.md
 
 3) Kick off an agent:
-   - Point it to spec/START.md (planning) or spec/EXECUTE.md (implementation)
-   - Or print the planning prompt:  spec.py prompt
+   - Planning: open spec/START.md (or print prompt with `spec.py prompt`)
+   - Implementation: open spec/EXECUTE.md
 
-4) The agent will:
-   - Read the design doc(s) listed in spec/prompts.md
-   - Create tasks in spec/tasks/ using spec/template.task.md
-   - Update spec/index.yml with id/title/labels/status/deps/file
-   - Keep task sizes ~2h with measurable Acceptance + Verification
-
-5) You track progress by opening:
+4) Track progress:
    - spec/index.yml  (statuses: todo|doing|done|blocked)
-   - spec/tasks/TM-xxx.md (details of a slice)
+   - spec/tasks/TM-xxx.md (task detail)
 
-Settings:
-- See spec/settings.yml to toggle auto/manual execution and loop behavior.
+Settings (spec/settings.yml):
+- Auto/manual: auto_execute_after_planning, next_task_loop
+- Multi-agent safety: require_owner_for_doing
+- Branch protection: enforce_branching, protected_branches, branch_naming
+- Templates: commit_message_template, pr_title_template
 """
     sys.stdout.write(guide)
 
@@ -410,6 +514,16 @@ def cmd_config(args):
         vals["require_owner_for_doing"] = args.require_owner == "on"
     if args.branch:
         vals["branch_naming"] = args.branch
+    if args.enforce is not None:
+        vals["enforce_branching"] = args.enforce == "on"
+    if args.protected:
+        # comma or space separated list
+        raw = args.protected.replace(",", " ").split()
+        vals["protected_branches"] = [p.strip() for p in raw if p.strip()]
+    if args.commit_tmpl:
+        vals["commit_message_template"] = args.commit_tmpl
+    if args.pr_title_tmpl:
+        vals["pr_title_template"] = args.pr_title_tmpl
     save_settings(vals)
     print("updated spec/settings.yml")
 
@@ -432,8 +546,11 @@ Examples:
   # 4) Show a concise user guide
   spec.py guide
 
-  # 5) Configure auto/manual execution & loop behavior
-  spec.py config --auto on --loop auto --require-owner on
+  # 5) Configure execution & protection
+  spec.py config --auto on --loop auto --require-owner on \\
+                 --enforce on --protected "main, master, develop" \\
+                 --branch "feat/{id}-{slug}" \\
+                 --commit-tmpl "{id}: {title}" --pr-title-tmpl "{id}: {title}"
 """
     parser = argparse.ArgumentParser(
         description="Minimal spec system: scaffold once, register design docs, and guide agents for planning/execution.",
@@ -472,7 +589,7 @@ Examples:
     p_guide.set_defaults(func=cmd_guide)
 
     p_config = sub.add_parser(
-        "config", help="toggle execution settings (writes spec/settings.yml)"
+        "config", help="toggle execution/protection settings (writes spec/settings.yml)"
     )
     p_config.add_argument(
         "--auto", choices=["on", "off"], help="auto start execution after planning"
@@ -489,6 +606,25 @@ Examples:
     )
     p_config.add_argument(
         "--branch", help="branch naming pattern, e.g. 'feat/{id}-{slug}'"
+    )
+    p_config.add_argument(
+        "--enforce",
+        choices=["on", "off"],
+        help="enforce branching; refuse commits on protected branches",
+    )
+    p_config.add_argument(
+        "--protected",
+        help="comma or space separated protected branches, e.g. 'main, master, develop'",
+    )
+    p_config.add_argument(
+        "--commit-tmpl",
+        dest="commit_tmpl",
+        help="commit message template, e.g. '{id}: {title}'",
+    )
+    p_config.add_argument(
+        "--pr-title-tmpl",
+        dest="pr_title_tmpl",
+        help="PR title template, e.g. '{id}: {title}'",
     )
     p_config.set_defaults(func=cmd_config)
 
