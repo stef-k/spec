@@ -58,7 +58,11 @@ Before writing tasks, echo: `PLAN: creating N tasks from <design(s)>`. If design
 
 0) If the design list below is empty, STOP and request: `spec add <path/to/design.md>`.
 
-1) Read the design doc(s). Break the feature into 8–15 tasks (~2h each).
+1) Plan tasks dynamically based on the design’s scope. Aim for ~2h per task by default (1–3h acceptable).
+   If the feature is small, fewer tasks with ~1h each is fine; if large, create more tasks or phased batches.
+   Before creating files, output: `PLAN: <N> tasks, ~<T>h each, reason: <short rationale>`.
+   - Default target: ~2h per task (1–3h acceptable).
+   - Default batch size: 6–15 tasks per planning pass; if more are needed, use phases.
 
 2) For each task:
    - Use `spec/template.task.md` (keep the YAML header minimal).
