@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # spec.py - minimal spec scaffold & design registrar (with planning/execution guides)
 
-import argparse, os, sys
+import argparse, os, sys, re
 
 # ---------- File templates ----------
 
@@ -283,12 +283,15 @@ def ensure_spec_dirs():
     os.makedirs("spec/tasks", exist_ok=True)
 
 
-def init_scaffold(force=False):
-    """Create the minimal scaffold. Overwrite helper files only if force=True."""
+def init_scaffold(force=False, force_index=False):
+    """Create the minimal scaffold. Overwrite helper files only if force=True.
+    Never overwrite spec/index.yml unless force_index=True."""
     ensure_spec_dirs()
     created = []
-    if safe_write("spec/index.yml", INDEX_YML, force):
+    # index.yml guarded separately
+    if safe_write("spec/index.yml", INDEX_YML, force_index):
         created.append("spec/index.yml")
+    # the rest respect --force
     if safe_write("spec/settings.yml", SETTINGS_YML, force):
         created.append("spec/settings.yml")
     if safe_write("spec/template.task.md", TEMPLATE_TASK_MD, force):
@@ -377,27 +380,25 @@ def load_settings():
             continue
         if not in_block or s == "" or s.startswith("#"):
             continue
-        # simple key: value parser
         if ":" in s:
             key, val = s.split(":", 1)
             key = key.strip()
             val = val.strip()
-            if (
-                key == "auto_execute_after_planning"
-                or key == "require_owner_for_doing"
-                or key == "enforce_branching"
+            if key in (
+                "auto_execute_after_planning",
+                "require_owner_for_doing",
+                "enforce_branching",
             ):
                 out[key] = val.lower().startswith("true")
             elif key == "next_task_loop":
                 out[key] = val
-            elif (
-                key == "branch_naming"
-                or key == "commit_message_template"
-                or key == "pr_title_template"
+            elif key in (
+                "branch_naming",
+                "commit_message_template",
+                "pr_title_template",
             ):
                 out[key] = val.strip('"')
             elif key == "protected_branches":
-                # parse ["a","b"] or [a, b] or comma string
                 val = val.strip()
                 if val.startswith("[") and val.endswith("]"):
                     inner = val[1:-1].strip()
@@ -440,16 +441,93 @@ settings:
     write_text("spec/settings.yml", body)
 
 
+# ---------- Reindex (safe rebuild of index.yml) ----------
+
+
+def parse_frontmatter_min(md_text):
+    """
+    Minimal front-matter parser (no external deps).
+    Expects a YAML-ish header between --- lines; extracts common keys.
+    """
+    m = re.match(r"^---\n(.*?)\n---", md_text, re.DOTALL)
+    if not m:
+        return {}
+    data = {}
+    for line in m.group(1).splitlines():
+        if ":" not in line:
+            continue
+        k, v = line.split(":", 1)
+        k = k.strip()
+        v = v.strip().strip('"').strip("'")
+        if k in ("labels", "deps"):
+            data[k] = re.findall(r"[A-Za-z0-9\-\_]+", v)
+        else:
+            data[k] = v
+    return data
+
+
+def cmd_reindex(_args):
+    """Rebuild spec/index.yml from spec/tasks/*.md while preserving current designs."""
+    designs = load_designs_from_index()
+    tasks_dir = "spec/tasks"
+    entries = []
+    if os.path.isdir(tasks_dir):
+        for name in sorted(os.listdir(tasks_dir)):
+            if not name.endswith(".md"):
+                continue
+            path = os.path.join(tasks_dir, name)
+            with open(path, "r", encoding="utf-8") as f:
+                fm = parse_frontmatter_min(f.read())
+            tid = fm.get("id") or os.path.splitext(name)[0]
+            entry = {
+                "id": tid,
+                "title": fm.get("title", ""),
+                "labels": fm.get("labels", []),
+                "status": fm.get("status", "todo"),
+                "deps": fm.get("deps", []),
+                "file": f"spec/tasks/{name}",
+            }
+            if fm.get("owner"):
+                entry["owner"] = fm["owner"]
+            entries.append(entry)
+
+    # write a simple YAML by hand (keeps this script dependency-free)
+    lines = []
+    lines.append("# Task ledger for agent + human")
+    if designs:
+        lines.append("designs:")
+        for d in designs:
+            lines.append(f"- {d}")
+    else:
+        lines.append("designs: []")
+    if entries:
+        lines.append("tasks:")
+        for e in entries:
+            lines.append(f"- id: {e['id']}")
+            lines.append(f"  title: {e['title']}")
+            lines.append(f"  labels: {e['labels']}")
+            lines.append(f"  status: {e['status']}")
+            lines.append(f"  deps: {e['deps']}")
+            lines.append(f"  file: {e['file']}")
+            if "owner" in e:
+                lines.append(f"  owner: {e['owner']}")
+    else:
+        lines.append("tasks: []")
+
+    write_text("spec/index.yml", "\n".join(lines) + "\n")
+    print(f"rebuilt spec/index.yml from {len(entries)} task file(s).")
+
+
 # ---------- Commands ----------
 
 
 def cmd_init(args):
-    created = init_scaffold(force=args.force)
+    created = init_scaffold(force=args.force, force_index=args.force_index)
     if created:
         print("created:", ", ".join(created))
     else:
         print(
-            "nothing to do (already initialized). use --force to overwrite helper files."
+            "nothing to do (already initialized). use --force for helpers; --force-index only if you really want to reset the ledger."
         )
 
 
@@ -523,7 +601,6 @@ def cmd_config(args):
     if args.enforce is not None:
         vals["enforce_branching"] = args.enforce == "on"
     if args.protected:
-        # comma or space separated list
         raw = args.protected.replace(",", " ").split()
         vals["protected_branches"] = [p.strip() for p in raw if p.strip()]
     if args.commit_tmpl:
@@ -542,6 +619,8 @@ def main():
 Examples:
   # 1) Create minimal scaffold once (spec/ folder, helper files)
   spec.py init
+  spec.py init --force              # refresh helpers (NOT the ledger)
+  spec.py init --force-index        # DANGEROUS: resets spec/index.yml
 
   # 2) Register a design doc (idempotent)
   spec.py add docs/design/Trusted\\ Managers\\ Mechanism.md
@@ -557,6 +636,9 @@ Examples:
                  --enforce on --protected "main, master, develop" \\
                  --branch "feat/{id}-{slug}" \\
                  --commit-tmpl "{id}: {title}" --pr-title-tmpl "{id}: {title}"
+
+  # 6) Rebuild index.yml from existing task files (safe)
+  spec.py reindex
 """
     parser = argparse.ArgumentParser(
         description="Minimal spec system: scaffold once, register design docs, and guide agents for planning/execution.",
@@ -571,7 +653,12 @@ Examples:
     p_init.add_argument(
         "--force",
         action="store_true",
-        help="overwrite helper files (index.yml, settings.yml, template.task.md, prompts.md, policies.md, START.md, EXECUTE.md). never touches spec/tasks/",
+        help="overwrite helper files (settings.yml, template.task.md, prompts.md, policies.md, START.md, EXECUTE.md). never touches spec/tasks/",
+    )
+    p_init.add_argument(
+        "--force-index",
+        action="store_true",
+        help="DANGEROUS: overwrite spec/index.yml (the task ledger). rarely needed.",
     )
     p_init.set_defaults(func=cmd_init)
 
@@ -633,6 +720,11 @@ Examples:
         help="PR title template, e.g. '{id}: {title}'",
     )
     p_config.set_defaults(func=cmd_config)
+
+    p_reindex = sub.add_parser(
+        "reindex", help="rebuild spec/index.yml from spec/tasks/*.md (safe)"
+    )
+    p_reindex.set_defaults(func=cmd_reindex)
 
     args = parser.parse_args()
     args.func(args)
