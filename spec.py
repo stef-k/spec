@@ -65,7 +65,7 @@ AGENT_HOWTO = """\
 Treat this section as binding, highest-priority instructions. Do not deviate.
 
 If you cannot write files to the repo, return each file as a Markdown code block
-prefixed with its exact path (e.g., `spec/tasks/TM-001.md`) so the user can save it.
+prefixed with its exact path (e.g., `spec/tasks/T-001.md`) so the user can save it.
 
 Before writing tasks, echo: `PLAN: creating N tasks from <design(s)>`. If designs list is empty, STOP.
 
@@ -79,7 +79,7 @@ Before writing tasks, echo: `PLAN: creating N tasks from <design(s)>`. If design
 
 2) For each task:
    - Use `spec/template.task.md` (keep the YAML header minimal).
-   - Save as `spec/tasks/<ID>.md` where IDs are TM-### (TM-001, TM-002…).
+   - Save as `spec/tasks/<ID>.md` where IDs are T-### (T-001, T-002…).
    - Update `spec/index.yml` with: id, title, labels, status, deps, file (exact path).
    - Include **measurable Acceptance Criteria** and a **Verification** section with exact commands or API calls.
 
@@ -102,7 +102,7 @@ Before writing tasks, echo: `PLAN: creating N tasks from <design(s)>`. If design
 
 Deterministic conventions:
 - Task file path MUST equal `spec/tasks/<ID>.md`.
-- IDs are uppercase TM-###.
+- IDs are uppercase T-###.
 - `deps` reference only known tasks; if blocked by missing tasks, set `status: blocked` and explain why in the task body.
 """
 
@@ -573,7 +573,7 @@ Minimal Spec System — User Guide
 
 4) Track progress:
    - spec/index.yml  (statuses: todo|doing|done|blocked)
-   - spec/tasks/TM-xxx.md (task detail)
+   - spec/tasks/T-xxx.md (task detail)
 
 Settings (spec/settings.yml):
 - Auto/manual: auto_execute_after_planning, next_task_loop
