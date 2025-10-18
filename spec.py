@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# spec.py - minimal spec scaffold & design registrar (with built-in agent guide)
+# spec.py - minimal spec scaffold & design registrar (with built-in agent guides)
 
 import argparse, os, sys
 
@@ -12,12 +12,21 @@ designs: []
 tasks: []
 """
 
+SETTINGS_YML = """# Minimal execution settings for agents
+settings:
+  auto_execute_after_planning: false   # if true, start implementation immediately after planning
+  next_task_loop: manual               # "manual" or "auto"
+  require_owner_for_doing: false       # if true, must set 'owner' before switching a task to 'doing'
+  branch_naming: "feat/{id}-{slug}"    # hint for agents (optional)
+"""
+
 TEMPLATE_TASK_MD = """---
 id: TM-XXX
 title: Short action name
 status: todo           # todo | doing | done | blocked
 labels: []             # e.g., db, backend, api, ui, sse, auditing, docs
 deps: []               # other task IDs
+owner: ""              # optional, set when taking the task
 inputs:
   - <DESIGN_DOC_PATH>  # pick one or more paths from spec/index.yml:designs
 outputs: []
@@ -83,6 +92,10 @@ Before writing tasks, echo: `PLAN: creating N tasks from <design(s)>`. If design
    - Prefer small vertical slices (DB → Service → API) where applicable.
    - Do **not** edit helper files (`spec/template.task.md`, `spec/prompts.md`, `spec/policies.md`) unless asked.
 
+6) After planning, check `spec/settings.yml`:
+   - If `auto_execute_after_planning: true`, continue with `spec/EXECUTE.md`.
+   - If false, STOP and wait for manual start.
+
 Deterministic conventions:
 - Task file path MUST equal `spec/tasks/<ID>.md`.
 - IDs are uppercase TM-###.
@@ -119,11 +132,47 @@ Steps:
 1) Read the design list in `spec/prompts.md`.
 2) Output first: `PLAN: <N> tasks, ~<T>h each, reason: <short rationale>`.
 3) Generate tasks under `spec/tasks/` using `spec/template.task.md` and update `spec/index.yml`.
-4) If you cannot write files, return each file as a Markdown code block prefixed with its exact path.
+4) After planning, check `spec/settings.yml`:
+   - If `auto_execute_after_planning: true`, continue with `spec/EXECUTE.md`.
+   - Otherwise, STOP and wait for manual start.
 
-Boundaries:
-- Do not modify `spec/template.task.md`, `spec/prompts.md`, or `spec/policies.md` unless asked.
-- Respect `spec/policies.md`. Reuse existing services/patterns; do not invent endpoints beyond the design.
+If you cannot write files, return each file as a Markdown code block prefixed with its exact path.
+"""
+
+EXECUTE_MD = """# EXECUTE (Task Implementation Instructions for Agent)
+
+Follow these steps exactly.
+
+0) Read `spec/settings.yml`.
+   - If `settings.require_owner_for_doing: true`, set `owner` in the task file before switching to `doing`.
+   - Branch hint: use `settings.branch_naming` (e.g., feat/{id}-slug).
+
+1) Select a task:
+   - Read `spec/index.yml` and pick the first `status: todo` whose `deps` are all `done`.
+
+2) Take the task:
+   - Open `spec/tasks/<ID>.md`.
+   - If required by settings, set `owner: <name>`.
+   - Change `status: doing`.
+
+3) Implement per the task’s Summary + Acceptance Criteria.
+   - Reuse existing services/patterns. Do not invent endpoints beyond the design.
+   - Keep changes scoped to the task.
+
+4) Tests & Verification:
+   - Add/adjust tests as required.
+   - Run the **Verification** steps from the task and ensure they pass.
+
+5) Complete:
+   - Check off Acceptance Criteria in the task file.
+   - Flip `status: done` when verification passes.
+   - Update `spec/index.yml` entry for `<ID>` with the final `status` (and `owner` if used).
+
+6) Loop behavior (from settings):
+   - If `settings.next_task_loop: auto`, repeat from step 1.
+   - If `manual`, STOP and wait.
+
+If you cannot write files, return each changed file as a Markdown code block with its exact repo path.
 """
 
 # ---------- Helpers ----------
@@ -163,6 +212,8 @@ def init_scaffold(force=False):
     created = []
     if safe_write("spec/index.yml", INDEX_YML, force):
         created.append("spec/index.yml")
+    if safe_write("spec/settings.yml", SETTINGS_YML, force):
+        created.append("spec/settings.yml")
     if safe_write("spec/template.task.md", TEMPLATE_TASK_MD, force):
         created.append("spec/template.task.md")
     if safe_write("spec/prompts.md", build_prompts_md([]), force):
@@ -171,6 +222,8 @@ def init_scaffold(force=False):
         created.append("spec/policies.md")
     if safe_write("spec/START.md", START_MD, force):
         created.append("spec/START.md")
+    if safe_write("spec/EXECUTE.md", EXECUTE_MD, force):
+        created.append("spec/EXECUTE.md")
     return created
 
 
@@ -235,6 +288,44 @@ def update_prompts_with_designs(designs):
     write_text("spec/prompts.md", build_prompts_md(designs))
 
 
+def load_settings():
+    # very lightweight parse for booleans/strings from spec/settings.yml
+    if not os.path.exists("spec/settings.yml"):
+        return {}
+    s = read_text("spec/settings.yml").splitlines()
+    out = {}
+    for line in s:
+        t = line.strip()
+        if t.startswith("auto_execute_after_planning:"):
+            out["auto_execute_after_planning"] = "true" in t.lower()
+        elif t.startswith("next_task_loop:"):
+            out["next_task_loop"] = t.split(":", 1)[1].strip()
+        elif t.startswith("require_owner_for_doing:"):
+            out["require_owner_for_doing"] = "true" in t.lower()
+        elif t.startswith("branch_naming:"):
+            out["branch_naming"] = t.split(":", 1)[1].strip().strip('"')
+    return out
+
+
+def save_settings(values):
+    # overwrite settings.yml with merged values
+    current = {
+        "auto_execute_after_planning": False,
+        "next_task_loop": "manual",
+        "require_owner_for_doing": False,
+        "branch_naming": "feat/{id}-{slug}",
+    }
+    current.update(values or {})
+    body = f"""# Minimal execution settings for agents
+settings:
+  auto_execute_after_planning: {"true" if current["auto_execute_after_planning"] else "false"}
+  next_task_loop: {current["next_task_loop"]}
+  require_owner_for_doing: {"true" if current["require_owner_for_doing"] else "false"}
+  branch_naming: "{current["branch_naming"]}"
+"""
+    write_text("spec/settings.yml", body)
+
+
 # ---------- Commands ----------
 
 
@@ -286,8 +377,8 @@ Minimal Spec System — User Guide
    spec.py add docs/design/Trusted\\ Managers\\ Mechanism.md
 
 3) Kick off an agent:
-   - Point it to spec/START.md or spec/prompts.md
-   - Or print the prompt:  spec.py prompt
+   - Point it to spec/START.md (planning) or spec/EXECUTE.md (implementation)
+   - Or print the planning prompt:  spec.py prompt
 
 4) The agent will:
    - Read the design doc(s) listed in spec/prompts.md
@@ -299,12 +390,28 @@ Minimal Spec System — User Guide
    - spec/index.yml  (statuses: todo|doing|done|blocked)
    - spec/tasks/TM-xxx.md (details of a slice)
 
-Notes:
-- `init` never touches spec/tasks/.
-- `add` is idempotent; it just registers more design docs.
-- Policies live in spec/policies.md (keep it one page).
+Settings:
+- See spec/settings.yml to toggle auto/manual execution and loop behavior.
 """
     sys.stdout.write(guide)
+
+
+def cmd_config(args):
+    """Toggle settings without editing YAML."""
+    ensure_spec_dirs()
+    if not os.path.exists("spec/settings.yml"):
+        init_scaffold(force=False)
+    vals = load_settings()
+    if args.auto is not None:
+        vals["auto_execute_after_planning"] = args.auto == "on"
+    if args.loop is not None:
+        vals["next_task_loop"] = args.loop
+    if args.require_owner is not None:
+        vals["require_owner_for_doing"] = args.require_owner == "on"
+    if args.branch:
+        vals["branch_naming"] = args.branch
+    save_settings(vals)
+    print("updated spec/settings.yml")
 
 
 # ---------- CLI ----------
@@ -325,11 +432,11 @@ Examples:
   # 4) Show a concise user guide
   spec.py guide
 
-  # 5) If you really want to regenerate helper files (won't touch spec/tasks/)
-  spec.py init --force
+  # 5) Configure auto/manual execution & loop behavior
+  spec.py config --auto on --loop auto --require-owner on
 """
     parser = argparse.ArgumentParser(
-        description="Minimal spec system: scaffold once, register design docs, print agent prompt/guide.",
+        description="Minimal spec system: scaffold once, register design docs, and guide agents for planning/execution.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=epilog,
     )
@@ -341,7 +448,7 @@ Examples:
     p_init.add_argument(
         "--force",
         action="store_true",
-        help="overwrite helper files (index.yml, template.task.md, prompts.md, policies.md, START.md). never touches spec/tasks/",
+        help="overwrite helper files (index.yml, settings.yml, template.task.md, prompts.md, policies.md, START.md, EXECUTE.md). never touches spec/tasks/",
     )
     p_init.set_defaults(func=cmd_init)
 
@@ -363,6 +470,27 @@ Examples:
         "guide", help="print a short user guide (human-facing instructions)"
     )
     p_guide.set_defaults(func=cmd_guide)
+
+    p_config = sub.add_parser(
+        "config", help="toggle execution settings (writes spec/settings.yml)"
+    )
+    p_config.add_argument(
+        "--auto", choices=["on", "off"], help="auto start execution after planning"
+    )
+    p_config.add_argument(
+        "--loop",
+        choices=["auto", "manual"],
+        help="auto pick next task after finishing one",
+    )
+    p_config.add_argument(
+        "--require-owner",
+        choices=["on", "off"],
+        help="require owner before switching a task to 'doing'",
+    )
+    p_config.add_argument(
+        "--branch", help="branch naming pattern, e.g. 'feat/{id}-{slug}'"
+    )
+    p_config.set_defaults(func=cmd_config)
 
     args = parser.parse_args()
     args.func(args)
