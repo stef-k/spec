@@ -25,7 +25,7 @@ settings:
 """
 
 TEMPLATE_TASK_MD = """---
-id: TM-XXX
+id: T-XXX
 title: Short action name
 status: todo           # todo | doing | done | blocked
 labels: []             # e.g., db, backend, api, ui, sse, auditing, docs
