@@ -49,16 +49,28 @@ Reuse existing services; do not invent endpoints unless the design says so.
 AGENT_HOWTO = """\
 # How to Instruct the Agent (copy/paste friendly)
 
-1) Read the design doc(s) listed below.
-2) Break the feature into 8–15 tasks (~2h each).
-3) For each task:
+0) If the design list below is empty, STOP and request: `spec add <path/to/design.md>`.
+
+1) Read the design doc(s). Break the feature into 8–15 tasks (~2h each).
+
+2) For each task:
    - Use `spec/template.task.md` (keep the YAML header minimal).
-   - Save as `spec/tasks/<ID>.md` (IDs like TM-001, TM-002…).
-   - Add/Update an entry in `spec/index.yml` with: id, title, labels, status, deps, file.
+   - Save as `spec/tasks/<ID>.md` where IDs are TM-### (TM-001, TM-002…).
+   - Update `spec/index.yml` with: id, title, labels, status, deps, file (exact path).
    - Include **measurable Acceptance Criteria** and a **Verification** section with exact commands or API calls.
-4) Status lifecycle: `todo | doing | done | blocked`. Set `owner` if used.
-5) Respect policies in `spec/policies.md`. Reuse existing services/patterns. Do NOT invent new endpoints unless the design says so.
-6) Each task must be independently testable. Mark `done` only after verification passes.
+
+3) Status lifecycle: `todo | doing | done | blocked`. Set `owner` if used.
+   - Mark `done` only after Verification passes.
+
+4) Dependencies:
+   - `deps` may reference only tasks present in `spec/index.yml`.
+   - Avoid cycles. If a missing prerequisite is needed, set `status: blocked` and explain in the task body.
+
+5) Boundaries:
+   - Respect `spec/policies.md`.
+   - Reuse existing services/patterns. Do **not** invent new endpoints unless the design explicitly says so.
+   - Prefer small vertical slices (DB → Service → API) where applicable.
+   - Do **not** edit helper files (`spec/template.task.md`, `spec/prompts.md`, `spec/policies.md`) unless asked.
 
 Deterministic conventions:
 - Task file path MUST equal `spec/tasks/<ID>.md`.
@@ -74,8 +86,8 @@ Read these design document(s):
 {agent_howto}
 
 ## Output required
-- Create or update: `spec/index.yml` (flat list of tasks).
-- Write task files to: `spec/tasks/` using `spec/template.task.md`.
+- Create or update `spec/index.yml` (flat list of tasks).
+- Write task files to `spec/tasks/` using `spec/template.task.md`.
 - Keep tasks small, vertical slices (DB → Service → API) where applicable.
 """
 
@@ -90,8 +102,10 @@ POLICIES_MD = """# Minimal Policies (agents must obey)
 
 # ---------- Helpers ----------
 
+
 def relpath_from_repo(path):
     return os.path.normpath(path).replace("\\", "/")
+
 
 def safe_write(path, content, force=False):
     if os.path.exists(path) and not force:
@@ -101,27 +115,36 @@ def safe_write(path, content, force=False):
         f.write(content)
     return True
 
+
 def read_text(path):
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
+
 
 def write_text(path, txt):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(txt)
 
+
 def ensure_spec_dirs():
     os.makedirs("spec/tasks", exist_ok=True)
+
 
 def init_scaffold(force=False):
     """Create the minimal scaffold. Overwrite helper files only if force=True."""
     ensure_spec_dirs()
     created = []
-    if safe_write("spec/index.yml", INDEX_YML, force): created.append("spec/index.yml")
-    if safe_write("spec/template.task.md", TEMPLATE_TASK_MD, force): created.append("spec/template.task.md")
-    if safe_write("spec/prompts.md", build_prompts_md([]), force): created.append("spec/prompts.md")
-    if safe_write("spec/policies.md", POLICIES_MD, force): created.append("spec/policies.md")
+    if safe_write("spec/index.yml", INDEX_YML, force):
+        created.append("spec/index.yml")
+    if safe_write("spec/template.task.md", TEMPLATE_TASK_MD, force):
+        created.append("spec/template.task.md")
+    if safe_write("spec/prompts.md", build_prompts_md([]), force):
+        created.append("spec/prompts.md")
+    if safe_write("spec/policies.md", POLICIES_MD, force):
+        created.append("spec/policies.md")
     return created
+
 
 def load_designs_from_index():
     if not os.path.exists("spec/index.yml"):
@@ -142,8 +165,11 @@ def load_designs_from_index():
                 break
     return designs
 
+
 def save_designs_to_index(designs):
-    existing = read_text("spec/index.yml") if os.path.exists("spec/index.yml") else INDEX_YML
+    existing = (
+        read_text("spec/index.yml") if os.path.exists("spec/index.yml") else INDEX_YML
+    )
     lines = existing.splitlines()
     out, i, wrote = [], 0, False
     while i < len(lines):
@@ -154,31 +180,45 @@ def save_designs_to_index(designs):
                 out.append(f"- {d}")
             wrote = True
             i += 1
-            while i < len(lines) and (lines[i].strip().startswith("- ") or lines[i].strip() == "" or lines[i].strip().startswith("#")):
+            while i < len(lines) and (
+                lines[i].strip().startswith("- ")
+                or lines[i].strip() == ""
+                or lines[i].strip().startswith("#")
+            ):
                 i += 1
             continue
-        out.append(lines[i]); i += 1
+        out.append(lines[i])
+        i += 1
     if not wrote:
         out.insert(1, "designs:")
         for d in designs:
             out.insert(2, f"- {d}")
-    write_text("spec/index.yml", "\n".join(out) + ("\n" if not out[-1].endswith("\n") else ""))
+    write_text(
+        "spec/index.yml", "\n".join(out) + ("\n" if not out[-1].endswith("\n") else "")
+    )
+
 
 def build_prompts_md(designs):
     bullets = "\n".join(f"- {d}" for d in designs) if designs else "- (none yet)"
     return PROMPTS_MD_TEMPLATE.format(design_bullets=bullets, agent_howto=AGENT_HOWTO)
 
+
 def update_prompts_with_designs(designs):
     write_text("spec/prompts.md", build_prompts_md(designs))
 
+
 # ---------- Commands ----------
+
 
 def cmd_init(args):
     created = init_scaffold(force=args.force)
     if created:
         print("created:", ", ".join(created))
     else:
-        print("nothing to do (already initialized). use --force to overwrite helper files.")
+        print(
+            "nothing to do (already initialized). use --force to overwrite helper files."
+        )
+
 
 def cmd_add(args):
     if not os.path.isfile(args.design):
@@ -199,10 +239,12 @@ def cmd_add(args):
         update_prompts_with_designs(designs)
         print(f"design already registered: {design_rel}")
 
+
 def cmd_prompt(_args):
     """Print the current agent planning prompt to stdout."""
     designs = load_designs_from_index()
     sys.stdout.write(build_prompts_md(designs))
+
 
 def cmd_guide(_args):
     """Print a concise user guide (human-facing instructions)."""
@@ -235,7 +277,9 @@ Notes:
 """
     sys.stdout.write(guide)
 
+
 # ---------- CLI ----------
+
 
 def main():
     epilog = """
@@ -258,27 +302,42 @@ Examples:
     parser = argparse.ArgumentParser(
         description="Minimal spec system: scaffold once, register design docs, print agent prompt/guide.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=epilog
+        epilog=epilog,
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_init = sub.add_parser("init", help="create the minimal spec scaffold (idempotent)")
-    p_init.add_argument("--force", action="store_true",
-                        help="overwrite helper files (index.yml, template.task.md, prompts.md, policies.md). never touches spec/tasks/")
+    p_init = sub.add_parser(
+        "init", help="create the minimal spec scaffold (idempotent)"
+    )
+    p_init.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite helper files (index.yml, template.task.md, prompts.md, policies.md). never touches spec/tasks/",
+    )
     p_init.set_defaults(func=cmd_init)
 
-    p_add = sub.add_parser("add", help="register a design doc (append to prompts; add to index.yml designs)")
-    p_add.add_argument("design", help="path to the feature design markdown file (prose)")
+    p_add = sub.add_parser(
+        "add",
+        help="register a design doc (append to prompts; add to index.yml designs)",
+    )
+    p_add.add_argument(
+        "design", help="path to the feature design markdown file (prose)"
+    )
     p_add.set_defaults(func=cmd_add)
 
-    p_prompt = sub.add_parser("prompt", help="print the current agent planning prompt to stdout")
+    p_prompt = sub.add_parser(
+        "prompt", help="print the current agent planning prompt to stdout"
+    )
     p_prompt.set_defaults(func=cmd_prompt)
 
-    p_guide = sub.add_parser("guide", help="print a short user guide (human-facing instructions)")
+    p_guide = sub.add_parser(
+        "guide", help="print a short user guide (human-facing instructions)"
+    )
     p_guide.set_defaults(func=cmd_guide)
 
     args = parser.parse_args()
     args.func(args)
+
 
 if __name__ == "__main__":
     main()
