@@ -185,6 +185,9 @@ START_MD = """# START (Agent Kickoff)
 
 Use **spec/prompts.md** as the authoritative, binding instructions. Do not deviate.
 
+Policy Gate:
+- Read `spec/policies.md` now and follow it for all decisions.
+
 Steps:
 1) Read the design list in `spec/prompts.md`.
 2) Output first: `PLAN: <N> tasks, ~<T>h each, reason: <short rationale>`.
@@ -199,6 +202,9 @@ If you cannot write files, return each file as a Markdown code block prefixed wi
 EXECUTE_MD = """# EXECUTE (Task Implementation Instructions for Agent)
 
 Follow these steps exactly.
+
+Policy Gate:
+- Read `spec/policies.md` now and follow it for all code, tests, data handling, and commit/PR behavior.
 
 0) Read `spec/settings.yml`.
    - If `settings.require_owner_for_doing: true`, set `owner` in the task file before switching to `doing`.
