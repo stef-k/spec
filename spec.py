@@ -49,6 +49,13 @@ Reuse existing services; do not invent endpoints unless the design says so.
 AGENT_HOWTO = """\
 # How to Instruct the Agent (copy/paste friendly)
 
+Treat this section as binding, highest-priority instructions. Do not deviate.
+
+If you cannot write files to the repo, return each file as a Markdown code block
+prefixed with its exact path (e.g., `spec/tasks/TM-001.md`) so the user can save it.
+
+Before writing tasks, echo: `PLAN: creating N tasks from <design(s)>`. If designs list is empty, STOP.
+
 0) If the design list below is empty, STOP and request: `spec add <path/to/design.md>`.
 
 1) Read the design doc(s). Break the feature into 8–15 tasks (~2h each).
