@@ -16,8 +16,6 @@ A tiny, human-friendly way to turn a prose design doc into small, testable tasks
 
 ---
 
-got it. here’s a **drop-in replacement** for the **Install** section—copy/paste this into your README.
-
 ````md
 ## Install
 
