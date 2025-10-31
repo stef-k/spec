@@ -45,47 +45,11 @@ spec init
 
 ### Windows
 
-**Option A — run with Python (no install):**
-
 ```powershell
 # from any folder
 py C:\path\to\spec.py init
 # or
 python C:\path\to\spec.py init
-```
-
-**Option B — add a simple CLI to your PATH:**
-
-```powershell
-# create a per-user bin and copy the script
-New-Item -ItemType Directory -Force $HOME\bin | Out-Null
-Copy-Item C:\path\to\spec.py $HOME\bin\spec.py
-
-# add to PATH (per-user)
-[Environment]::SetEnvironmentVariable(
-  'Path', "$env:Path;$HOME\bin", 'User'
-)
-# restart the terminal to pick up the PATH change
-```
-
-Now you can run:
-
-```powershell
-py spec.py init
-```
-
-**Optional (nicer `spec` command on Windows):**
-Create a wrapper file `%USERPROFILE%\bin\spec.bat` with:
-
-```bat
-@echo off
-py "%~dp0spec.py" %*
-```
-
-Then you can call:
-
-```powershell
-spec init
 ```
 
 > Requires **Python 3.x** (the `py` launcher comes with the official Windows Python installer).
@@ -102,11 +66,23 @@ python3 spec.py init
 python3 spec.py add "docs/design/Your Design Document.md"
 
 # 3) Get the agent prompt (copy/paste into your AI agent)
-python3 spec.py prompt
+python3 spec.py prompt OR tell the agent to execute as per docs/spec/START.md (copy from bellow)
 
 # (Optional) Show a short user guide
 python3 spec.py guide
 ```
+
+## Copy Agent Jumpstart Command (Task Creation)
+
+Assuming you are at project root from where you called the `spec.py` tool then the `spec/` dir should exist and inside it is the START.md, copy and paste the following:
+
+```execute as per spec/START.md```
+
+## Copy Agent Execution Command (Actual Implementation of Tasks)
+
+Assuming you are at project root from where you called the `spec.py` tool then the `spec/` dir should exist and inside it is the EXECUTE.md, copy and paste the following:
+
+```execute as per spec/EXECUTE.md```
 
 What gets created:
 
