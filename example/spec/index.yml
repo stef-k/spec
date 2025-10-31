@@ -1,0 +1,90 @@
+# Task ledger for agent + human
+# 'designs' lists the design docs agents should read.
+# 'tasks' is a flat list; agents will add entries and update statuses.
+designs:
+- Groups.md
+tasks:
+  - id: T-001
+    title: AppShell entry and MyGroupsPage scaffold
+    labels: [ui, docs]
+    status: todo
+    deps: []
+    file: spec/tasks/T-001.md
+  - id: T-002
+    title: GroupPicker modal and last-selected persistence
+    labels: [ui, api]
+    status: todo
+    deps: [T-001]
+    file: spec/tasks/T-002.md
+  - id: T-003
+    title: GroupLocationsService (members/latest/query)
+    labels: [api]
+    status: todo
+    deps: [T-001]
+    file: spec/tasks/T-003.md
+  - id: T-004
+    title: Deterministic per-user color mapping (mirror backend)
+    labels: [ui]
+    status: todo
+    deps: [T-002, T-003]
+    file: spec/tasks/T-004.md
+  - id: T-005
+    title: Legend expanding bottom sheet (scrollable) with selection
+    labels: [ui]
+    status: todo
+    deps: [T-001, T-004]
+    file: spec/tasks/T-005.md
+  - id: T-006
+    title: SSE client (Bearer, reconnect, stop on non-Today)
+    labels: [sse, api]
+    status: todo
+    deps: [T-003]
+    file: spec/tasks/T-006.md
+  - id: T-007
+    title: Today live flow integration with SSE and latest refresh
+    labels: [sse, ui]
+    status: todo
+    deps: [T-001, T-003, T-004, T-006]
+    file: spec/tasks/T-007.md
+  - id: T-008
+    title: Single-day date picker (year→month→day) and historical query
+    labels: [ui, api]
+    status: todo
+    deps: [T-003]
+    file: spec/tasks/T-008.md
+  - id: T-009
+    title: Marker details modal (identity, dual times, actions)
+    labels: [ui]
+    status: todo
+    deps: [T-001]
+    file: spec/tasks/T-009.md
+  - id: T-010
+    title: Connectivity parity (banner/toasts) and guards
+    labels: [ui, offline]
+    status: todo
+    deps: [T-001]
+    file: spec/tasks/T-010.md
+  - id: T-011
+    title: Performance guards (debounce, throttle, selection limits)
+    labels: [perf]
+    status: todo
+    deps: [T-007, T-008]
+    file: spec/tasks/T-011.md
+  - id: T-012
+    title: Persistence in SettingsStore (group id, legend state)
+    labels: [storage]
+    status: todo
+    deps: [T-001, T-005]
+    file: spec/tasks/T-012.md
+  - id: T-013
+    title: Tests and verification (color mapping, SSE parser, date shaping)
+    labels: [tests]
+    status: todo
+    deps: [T-004, T-006, T-007, T-008, T-009]
+    file: spec/tasks/T-013.md
+  - id: T-014
+    title: Backend gaps handover pack (issues/docs + curl recipes)
+    labels: [docs, backend]
+    status: todo
+    deps: []
+    file: spec/tasks/T-014.md

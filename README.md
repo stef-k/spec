@@ -122,7 +122,7 @@ spec.py guide           # print a short human guide
    * Creates tasks in `spec/tasks/` using `spec/template.task.md`.
    * Updates `spec/index.yml` with `id/title/labels/status/deps/file`.
 5. **Track** progress by opening `spec/index.yml`.
-   Drill into any task via `spec/tasks/TM-0xx.md`.
+   Drill into any task via `spec/tasks/T-0xx.md`.
 
 ---
 
@@ -133,6 +133,13 @@ spec.py guide           # print a short human guide
 * **Status**: `todo | doing | done | blocked`.
 * **Deps**: only reference tasks that exist in `index.yml`.
 * **Acceptance + Verification**: every task must include measurable checks and exact commands or calls to prove success.
+
+---
+
+## Real World Example
+
+In the `example` dir (assuming that is the directory holding documentation design documents), there is a design document named `Groups.md`.
+We run `spec.py init` in it and then `spec.py add Groups.ms` then instructed the agent with `execute as per spec/START.md` to produce task files that are manageable implementation tasks T-XXX. Finally we call instruct the agent to `execute as per spec/EXECUTE.md` in order to start implementing each task. The entire feature is implemented in it's own git branch as per instructions (`policies.md`).
 
 ---
 
