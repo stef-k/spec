@@ -16,16 +16,16 @@ A tiny, human-friendly way to turn a prose design doc into small, testable tasks
 
 ---
 
-````md
+```bash
 ## Install
 
 You can keep `spec.py` outside your projects and run it from anywhere.
 
 ### macOS / Linux
 **Option A — run with Python (no install):**
-```bash
+
 python3 /path/to/spec.py init
-````
+```
 
 **Option B — make it a CLI on your PATH:**
 
@@ -66,7 +66,7 @@ python3 spec.py init
 python3 spec.py add "docs/design/Your Design Document.md"
 
 # 3) Get the agent prompt (copy/paste into your AI agent)
-python3 spec.py prompt OR tell the agent to execute as per docs/spec/START.md (copy from bellow)
+python3 spec.py prompt OR tell the agent to execute as per docs/spec/PLAN.md (copy from bellow)
 
 # (Optional) Show a short user guide
 python3 spec.py guide
@@ -74,9 +74,9 @@ python3 spec.py guide
 
 ## Copy Agent Jumpstart Command (Task Creation)
 
-Assuming you are at project root from where you called the `spec.py` tool then the `spec/` dir should exist and inside it is the START.md, copy and paste the following:
+Assuming you are at project root from where you called the `spec.py` tool then the `spec/` dir should exist and inside it is the PLAN.md, copy and paste the following:
 
-```execute as per spec/START.md```
+```execute as per spec/PLAN.md```
 
 ## Copy Agent Execution Command (Actual Implementation of Tasks)
 
@@ -86,13 +86,15 @@ Assuming you are at project root from where you called the `spec.py` tool then t
 
 What gets created:
 
-```
+```bash
 spec/
   index.yml            # task ledger (flat list)
   template.task.md     # tiny task template with YAML header
   prompts.md           # planning prompt that lists your design doc(s)
   policies.md          # one-page guardrails (edit if needed)
-  tasks/               # agents will write TM-###.md here
+  PLAN.md              # planning flow (previously START.md)
+  EXECUTE.md           # implementation flow (feature-parent branches)
+  tasks/               # agents will write T-###.md here
 docs/
   design/
     Your Design Document.md
@@ -124,11 +126,20 @@ spec.py guide           # print a short human guide
 5. **Track** progress by opening `spec/index.yml`.
    Drill into any task via `spec/tasks/T-0xx.md`.
 
+### Task utilities
+
+* `spec.py tasks` — list all tasks from files (fast overview).
+* `spec.py tasks --status "todo,doing"` — filter by status.
+* `spec.py tasks --owner stef --grep route` — filter by owner + substring.
+* `spec.py tasks --check` — compare files vs index (read-only drift report).
+* `spec.py tasks --check --strict` — same as above, but exit 1 on drift (CI-friendly).
+* `spec.py tasks --fix` — sync index from files (same as `spec.py reindex`).
+
 ---
 
 ## Conventions (simple rules)
 
-* **IDs**: `TM-001`, `TM-002`, …
+* **IDs**: `T-001`, `T-002`, …
 * **Files**: each task lives at `spec/tasks/<ID>.md`.
 * **Status**: `todo | doing | done | blocked`.
 * **Deps**: only reference tasks that exist in `index.yml`.
@@ -138,8 +149,7 @@ spec.py guide           # print a short human guide
 
 ## Real World Example
 
-In the `example` dir (assuming that is the directory holding documentation design documents), there is a design document named `Groups.md`.
-We run `spec.py init` in it and then `spec.py add Groups.ms` then instructed the agent with `execute as per spec/START.md` to produce task files that are manageable implementation tasks T-XXX. Finally we call instruct the agent to `execute as per spec/EXECUTE.md` in order to start implementing each task. The entire feature is implemented in it's own git branch as per instructions (`policies.md`).
+In the `example` dir (the folder holding your design docs), there’s a design document named `Groups.md`. Run `spec.py init`, then `spec.py add Groups.md`, and instruct the agent to execute as per `spec/PLAN.md` to generate manageable task files (`T-XXX`). Next, instruct the agent to `execute as per spec/EXECUTE.md` to implement each task. The entire feature is developed on its own feature parent branch; task PRs must target that feature branch, and the final merge to main/master is user-only (see `spec/policies.md`).
 
 ---
 
@@ -152,7 +162,7 @@ We run `spec.py init` in it and then `spec.py add Groups.ms` then instructed the
 
 **What does `--force` do?**
 
-* Only for `init`. It **overwrites helper files** (`index.yml`, `template.task.md`, `prompts.md`, `policies.md`).
+* Only for `init`. It **overwrites helper files** (`index.yml`, `template.task.md`, `prompts.md`, `policies.md`, `PLAN.md`, `EXECUTE.md`).
 * It **never** touches `spec/tasks/`.
 
 **Do I need epics?**

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # spec.py - minimal spec scaffold & design registrar (with planning/execution guides)
 
-import argparse, os, sys, re
+import argparse
+import os
+import re
+import sys
 
 # ---------- File templates ----------
 
@@ -14,11 +17,13 @@ tasks: []
 
 SETTINGS_YML = """# Minimal execution settings for agents
 settings:
-  auto_execute_after_planning: false   # if true, start implementation immediately after planning
-  next_task_loop: manual               # "manual" or "auto"
-  require_owner_for_doing: false       # if true, must set 'owner' before switching a task to 'doing'
-  branch_naming: "feat/{id}-{slug}"    # hint/pattern for branch names
-  enforce_branching: true              # if true, agent must refuse to commit on protected branches
+  auto_execute_after_planning: false                        # if true, start implementation immediately after planning
+  next_task_loop: manual                                    # "manual" or "auto"
+  require_owner_for_doing: false                            # if true, must set 'owner' before switching a task to 'doing'
+  feature_branch_naming: "feat/{feature_slug}"              # parent branch per design/feature
+  branch_naming: "feat/{feature_slug}/{id}-{slug}"          # hint/pattern for branch names
+  feature_base_candidates: ["main", "master", "develop"]    # base for feature branch (first that exists)
+  enforce_branching: true                                   # if true, agent must refuse to commit on protected branches
   protected_branches: ["main", "master", "develop"]
   commit_message_template: "{id}: {title}"
   pr_title_template: "{id}: {title}"
@@ -33,6 +38,7 @@ deps: []               # other task IDs
 owner: ""              # optional, set when taking the task
 inputs:
   - <DESIGN_DOC_PATH>  # pick one or more paths from spec/index.yml:designs
+feature_branch: ""     # optional, e.g., feat/mobile-group-location-sharing
 outputs: []
 timebox: "2h"
 ---
@@ -96,7 +102,20 @@ Before writing tasks, echo: `PLAN: creating N tasks from <design(s)>`. If design
    - Prefer small vertical slices (DB → Service → API) where applicable.
    - Do **not** edit helper files (`spec/template.task.md`, `spec/prompts.md`, `spec/policies.md`) unless asked.
 
-6) After planning, check `spec/settings.yml`:
+6) **Feature Branch Workflow (MANDATORY)**:
+   - Derive `{feature_slug}` from the chosen design doc filename (lowercased, non-alnum → `-`, strip extension).
+     Example: `docs/design/Mobile Group Location Sharing.md` → `mobile-group-location-sharing`.
+   - Compute the **feature parent branch** using settings: `feature_branch_naming` (default: `feat/{feature_slug}`).
+   - Before implementing any task:
+     1. Ensure a local default base (`main`, `master`, or `develop`) exists; choose the first that exists locally.
+     2. Create/switch to the **feature branch** off that base.
+   - For each task:
+     - Compute `{slug}` from the task title (lowercase, hyphenated).
+     - Create a **task branch** using `branch_naming` (default: `feat/{feature_slug}/{id}-{slug}`) **from the feature branch**.
+   - **All PRs MUST target the feature branch**. Never target protected branches directly.
+   - **Final merge from feature → master/main is the USER’s responsibility.** The agent must not propose or perform that merge.
+
+7) After planning, check `spec/settings.yml`:
    - If `auto_execute_after_planning: true`, continue with `spec/EXECUTE.md`.
    - If false, STOP and wait for manual start.
 
@@ -137,7 +156,10 @@ POLICIES_MD = """# Minimal Policies (agents must obey)
 - Do not modify CI/CD config unless the task explicitly says so.
 
 ## Code & Git Hygiene
-- Follow `spec/settings.yml` for branching (branch pattern, protected branches).
+- Follow `spec/settings.yml` for branching (feature parent + per-task branches).
+- All task branches MUST be created from the feature parent branch (not main/master/develop).
+- Open PRs **only** against the feature parent branch. Never target protected branches directly.
+- Final merge from feature → master/main/develop is **user-only** (agent must not attempt it).
 - Small, atomic commits. Include task ID in commit messages/PR titles.
 - Don’t push directly to protected branches.
 
@@ -178,10 +200,12 @@ POLICIES_MD = """# Minimal Policies (agents must obey)
 - Record notable decisions/limitations in the task’s Notes section.
 
 ## Project-Specific Additions
-- (Add bullets here as the repo grows; keep this file under one page.)
+- Use a feature parent branch per design (from base main/master/develop), then branch tasks from it.
+- PR base must be the feature parent branch; never open PRs to protected branches.
+- Final merge from feature → protected branches is **user-only**.
 """
 
-START_MD = """# START (Agent Kickoff)
+PLAN_MD = """# PLAN  (Agent Task Planning)
 
 Use **spec/prompts.md** as the authoritative, binding instructions. Do not deviate.
 
@@ -205,11 +229,17 @@ Follow these steps exactly.
 
 Policy Gate:
 - Read `spec/policies.md` now and follow it for all code, tests, data handling, and commit/PR behavior.
+- Feature parent branch hint: `settings.feature_branch_naming`
+- Task branch hint: `settings.branch_naming`
+- Candidate base for feature branch: `settings.feature_base_candidates`
+- Protected branches: `settings.protected_branches` (NEVER commit here).
+- Final feature → master/main merge is **user-only**.
 
 0) Read `spec/settings.yml`.
    - If `settings.require_owner_for_doing: true`, set `owner` in the task file before switching to `doing`.
    - **Branching is mandatory if `settings.enforce_branching: true`.**
-   - Branch pattern hint: `settings.branch_naming` (e.g., feat/{id}-{slug}).
+   - Feature parent branch pattern: `settings.feature_branch_naming` (e.g., feat/{feature_slug}).
+   - Task branch pattern: `settings.branch_naming` (e.g., feat/{feature_slug}/{id}-{slug}).
    - Protected branches: `settings.protected_branches` (NEVER commit here).
 
 1) Select a task:
@@ -220,31 +250,63 @@ Policy Gate:
    - If required by settings, set `owner: <name>`.
    - Change `status: doing`.
 
-3) **Create a working branch (REQUIRED when enforce_branching = true):**
-   - Compute `<slug>` from the task title (lowercase, hyphenated, alnum+hyphen).
-   - Branch name = `settings.branch_naming` with `{id}` and `{slug}` replaced.
-   - Detect current branch. If it is in `protected_branches`, STOP and output the shell command to create/switch:
-     - `git checkout -b <branch>` (if new) OR `git switch <branch>` (if exists).
-   - If you cannot run shell commands, **return the exact commands** to run as a fenced code block.
+3) **Create/switch to the FEATURE parent branch (REQUIRED):**
+   - Derive `{feature_slug}` from the first `inputs:` design file name (lowercase, non-alnum → '-', strip extension).
+   - Compute `<feature_branch>` using `settings.feature_branch_naming`.
+   - Determine `<base>` by choosing the first existing local branch from `settings.feature_base_candidates`.
+   - If you cannot run shell, output the exact commands below; otherwise run:
 
-4) Implement per the task’s Summary + Acceptance Criteria.
+```bash
+# determine base locally (example sequence)
+git show-ref --verify --quiet refs/heads/main   && base=main  || true
+[ -z "$base" ] && git show-ref --verify --quiet refs/heads/master  && base=master || true
+[ -z "$base" ] && git show-ref --verify --quiet refs/heads/develop && base=develop || true
+[ -z "$base" ] && echo "No base branch found (main/master/develop). Create one first." && exit 1
+
+git fetch origin
+if git show-ref --verify --quiet "refs/heads/<feature_branch>"; then
+  git switch "<feature_branch>"
+  git merge --ff-only "$base" || true  # keep it fresh if desired
+else
+  git switch "$base"
+  git pull --ff-only
+  git switch -c "<feature_branch>"
+fi
+```
+
+4) **Create/switch to the TASK working branch (from the feature branch):**
+   - Compute `{slug}` from the task title (lowercase, hyphenated).
+   - Branch name = `settings.branch_naming` with `{id}`, `{slug}`, `{feature_slug}` replaced.
+   - If you cannot run shell commands, **return**:
+
+```bash
+git switch "<feature_branch>"
+git switch -c "<task_branch>"   # or: git switch "<task_branch>" if it already exists
+```
+
+5) Implement per the task’s Summary + Acceptance Criteria.
    - Reuse existing services/patterns. Do not invent endpoints beyond the design.
    - Keep changes scoped to the task.
 
-5) Tests & Verification:
+6) Tests & Verification:
    - Add/adjust tests as required.
    - Run the **Verification** steps from the task and ensure they pass.
 
-6) Commit:
+7) Commit:
    - Commit message = `settings.commit_message_template` with `{id}` and `{title}` replaced.
    - If on a protected branch, STOP and output the correct branch/switch commands instead.
 
-7) Complete:
+8) Open PR:
+   - PR title = `settings.pr_title_template` with `{id}` and `{title}` replaced.
+   - **PR base = <feature_branch>** (NEVER master/main/develop).
+   - Include a link or reference to the task file and list Acceptance Criteria in the PR body.
+
+9) Complete:
    - Check off Acceptance Criteria in the task file.
    - Flip `status: done` when verification passes.
    - Update `spec/index.yml` entry for `<ID>` with the final `status` (and `owner` if used).
 
-8) Loop behavior (from settings):
+10) Loop behavior (from settings):
    - If `settings.next_task_loop: auto`, repeat from step 1.
    - If `manual`, STOP and wait.
 
@@ -300,8 +362,8 @@ def init_scaffold(force=False, force_index=False):
         created.append("spec/prompts.md")
     if safe_write("spec/policies.md", POLICIES_MD, force):
         created.append("spec/policies.md")
-    if safe_write("spec/START.md", START_MD, force):
-        created.append("spec/START.md")
+    if safe_write("spec/PLAN.md", PLAN_MD, force):
+        created.append("spec/PLAN.md")
     if safe_write("spec/EXECUTE.md", EXECUTE_MD, force):
         created.append("spec/EXECUTE.md")
     return created
@@ -351,12 +413,12 @@ def save_designs_to_index(designs):
         out.append(lines[i])
         i += 1
     if not wrote:
-        out.insert(1, "designs:")
-        for d in designs:
-            out.insert(2, f"- {d}")
-    write_text(
-        "spec/index.yml", "\n".join(out) + ("\n" if not out[-1].endswith("\n") else "")
-    )
+        # find insertion point after initial comments (if any)
+        insert_at = 0
+        while insert_at < len(out) and out[insert_at].strip().startswith("#"):
+            insert_at += 1
+        out[insert_at:insert_at] = ["designs:"] + [f"- {d}" for d in designs]
+    write_text("spec/index.yml", "\n".join(out) + "\n")
 
 
 def build_prompts_md(designs):
@@ -394,11 +456,12 @@ def load_settings():
                 out[key] = val
             elif key in (
                 "branch_naming",
+                "feature_branch_naming",  # NEW
                 "commit_message_template",
                 "pr_title_template",
             ):
                 out[key] = val.strip('"')
-            elif key == "protected_branches":
+            elif key in ("protected_branches", "feature_base_candidates"):  # NEW tuple
                 val = val.strip()
                 if val.startswith("[") and val.endswith("]"):
                     inner = val[1:-1].strip()
@@ -419,26 +482,193 @@ def save_settings(values):
         "auto_execute_after_planning": False,
         "next_task_loop": "manual",
         "require_owner_for_doing": False,
-        "branch_naming": "feat/{id}-{slug}",
+        # NEW: feature-parent branching defaults
+        "feature_branch_naming": "feat/{feature_slug}",
+        "branch_naming": "feat/{feature_slug}/{id}-{slug}",
+        "feature_base_candidates": ["main", "master", "develop"],
         "enforce_branching": True,
         "protected_branches": ["main", "master", "develop"],
         "commit_message_template": "{id}: {title}",
         "pr_title_template": "{id}: {title}",
     }
     current.update(values or {})
+
     pb = ", ".join(f'"{b}"' for b in current["protected_branches"])
+    fbc = ", ".join(f'"{b}"' for b in current["feature_base_candidates"])
+
     body = f"""# Minimal execution settings for agents
 settings:
   auto_execute_after_planning: {"true" if current["auto_execute_after_planning"] else "false"}
   next_task_loop: {current["next_task_loop"]}
   require_owner_for_doing: {"true" if current["require_owner_for_doing"] else "false"}
+
+  # Branching workflow (feature-parent + per-task branches)
+  feature_branch_naming: "{current["feature_branch_naming"]}"
   branch_naming: "{current["branch_naming"]}"
+  feature_base_candidates: [{fbc}]
+
   enforce_branching: {"true" if current["enforce_branching"] else "false"}
   protected_branches: [{pb}]
   commit_message_template: "{current["commit_message_template"]}"
   pr_title_template: "{current["pr_title_template"]}"
 """
     write_text("spec/settings.yml", body)
+
+
+def to_feature_slug(path_or_title: str) -> str:
+    """
+    Derive {feature_slug} from a design filename or plain title.
+    Lowercase, replace non-alnum with '-', and trim dashes.
+    """
+    base = os.path.basename(path_or_title)
+    name, _ = os.path.splitext(base)
+    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return slug
+
+
+def compute_feature_branch(path_or_title: str, settings: dict | None = None) -> str:
+    """
+    Render the feature parent branch using spec/settings.yml pattern.
+    """
+    settings = settings or load_settings()
+    pattern = settings.get("feature_branch_naming", "feat/{feature_slug}")
+    return pattern.replace("{feature_slug}", to_feature_slug(path_or_title))
+
+
+def task_branch_name(
+    feature_design: str, task_id: str, task_title: str, settings: dict | None = None
+) -> str:
+    """
+    Render a task branch from settings.branch_naming using {feature_slug}, {id}, {slug}.
+    """
+    settings = settings or load_settings()
+    pattern = settings.get("branch_naming", "feat/{feature_slug}/{id}-{slug}")
+    feature_slug = to_feature_slug(feature_design)
+    slug = re.sub(r"[^a-z0-9]+", "-", task_title.lower()).strip("-")
+    return (
+        pattern.replace("{feature_slug}", feature_slug)
+        .replace("{id}", task_id)
+        .replace("{slug}", slug)
+    )
+
+
+def parse_task_file(path: str) -> dict:
+    """
+    Parse the YAML header from spec/tasks/*.md.
+    Returns: {id,title,status,labels,deps,owner,file}
+    """
+    text = read_text(path)
+    if not text.startswith("---"):
+        raise ValueError(f"Missing YAML header in {path}")
+    end = text.find("\n---", 3)
+    header = text[4:end] if end != -1 else text[4:]
+    out = {"labels": [], "deps": [], "owner": "", "file": path}
+    for line in header.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or ":" not in s:
+            continue
+        k, v = s.split(":", 1)
+        k, v = k.strip(), v.strip()
+        if k in ("id", "title", "status", "owner"):
+            out[k] = v.strip('"')
+        elif k in ("labels", "deps"):
+            if v.startswith("[") and v.endswith("]"):
+                inner = v[1:-1].strip()
+                out[k] = [
+                    p.strip().strip('"').strip("'")
+                    for p in inner.split(",")
+                    if p.strip()
+                ]
+            elif v:
+                out[k] = [v.strip('"').strip("'")]
+    out.setdefault("id", os.path.basename(path)[:-3])
+    out.setdefault("title", "")
+    out.setdefault("status", "todo")
+    return out
+
+
+def parse_index_tasks(index_path="spec/index.yml") -> list:
+    if not os.path.exists(index_path):
+        return []
+    lines = read_text(index_path).splitlines()
+    tasks, cur, in_tasks = [], {}, False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("tasks:"):
+            in_tasks, cur = True, {}
+            continue
+        if not in_tasks:
+            continue
+        # parse flat list under tasks:
+        if s.startswith("- "):
+            if cur:
+                tasks.append(cur)
+                cur = {}
+            if ":" in s[2:]:
+                k, v = s[2:].split(":", 1)
+                cur[k.strip()] = v.strip().strip('"')
+            continue
+        if s == "" or s.startswith("#"):
+            continue
+        if ":" in s:
+            k, v = s.split(":", 1)
+            k, v = k.strip(), v.strip()
+            if k in ("id", "title", "status", "owner", "file"):
+                cur[k] = v.strip('"')
+            elif k in ("labels", "deps"):
+                if v.startswith("[") and v.endswith("]"):
+                    inner = v[1:-1].strip()
+                    cur[k] = [
+                        p.strip().strip('"').strip("'")
+                        for p in inner.split(",")
+                        if p.strip()
+                    ]
+                elif v:
+                    cur[k] = [v.strip('"').strip("'")]
+    if cur:
+        tasks.append(cur)
+    return tasks
+
+
+def quick_diff_files_vs_index(files: list, index: list) -> list:
+    """
+    Return list of basic inconsistencies:
+      - missing_in_index: file exists but no ledger entry
+      - missing_file: ledger points to a file that doesn't exist
+      - status_mismatch: header status != index status
+    """
+    out = []
+    by_id_file = {t["id"]: t for t in files}
+    by_id_index = {t["id"]: t for t in index}
+
+    # file exists but not in index
+    for tid, tf in by_id_file.items():
+        if tid not in by_id_index:
+            out.append({"type": "missing_in_index", "id": tid, "file": tf["file"]})
+
+    # in index but file missing
+    for tid, ti in by_id_index.items():
+        f = ti.get("file") or f"spec/tasks/{tid}.md"
+        if not os.path.exists(f):
+            out.append({"type": "missing_file", "id": tid, "index_file": f})
+
+    # status mismatch
+    for tid, tf in by_id_file.items():
+        ti = by_id_index.get(tid)
+        if not ti:
+            continue
+        fs = (tf.get("status") or "").strip().lower()
+        is_ = (ti.get("status") or "").strip().lower()
+        if fs and is_ and fs != is_:
+            out.append({
+                "type": "status_mismatch",
+                "id": tid,
+                "file_status": fs,
+                "index_status": is_,
+                "file": tf["file"],
+                "index_file": ti.get("file"),
+            })
+    return out
 
 
 # ---------- Reindex (safe rebuild of index.yml) ----------
@@ -558,7 +788,7 @@ def cmd_prompt(_args):
 
 
 def cmd_guide(_args):
-    guide = f"""\
+    guide = """\
 Minimal Spec System — User Guide
 
 1) Initialize once per repo:
@@ -568,7 +798,7 @@ Minimal Spec System — User Guide
    spec.py add docs/design/Trusted\\ Managers\\ Mechanism.md
 
 3) Kick off an agent:
-   - Planning: open spec/START.md (or print prompt with `spec.py prompt`)
+   - - Planning: open spec/PLAN.md (or print prompt with `spec.py prompt`)
    - Implementation: open spec/EXECUTE.md
 
 4) Track progress:
@@ -578,8 +808,18 @@ Minimal Spec System — User Guide
 Settings (spec/settings.yml):
 - Auto/manual: auto_execute_after_planning, next_task_loop
 - Multi-agent safety: require_owner_for_doing
-- Branch protection: enforce_branching, protected_branches, branch_naming
+- Branching:
+  - feature_branch_naming (e.g., feat/{feature_slug})
+  - branch_naming (e.g., feat/{feature_slug}/{id}-{slug})
+  - feature_base_candidates (default: main, master, develop)
+  - enforce_branching, protected_branches
 - Templates: commit_message_template, pr_title_template
+
+Task utilities:
+- spec.py tasks               # list all tasks from files
+- spec.py tasks --check       # report basic drift vs index (read-only)
+- spec.py tasks --fix         # rebuild index.yml from files (same as reindex)
+
 """
     sys.stdout.write(guide)
 
@@ -607,8 +847,109 @@ def cmd_config(args):
         vals["commit_message_template"] = args.commit_tmpl
     if args.pr_title_tmpl:
         vals["pr_title_template"] = args.pr_title_tmpl
+    if args.feature_branch:
+        vals["feature_branch_naming"] = args.feature_branch
+    if args.feature_bases:
+        raw = args.feature_bases.replace(",", " ").split()
+        vals["feature_base_candidates"] = [p.strip() for p in raw if p.strip()]
+
     save_settings(vals)
     print("updated spec/settings.yml")
+
+
+def cmd_feature(args):
+    s = load_settings()
+    slug = to_feature_slug(args.design)
+    branch = compute_feature_branch(args.design, s)
+    print(f"feature_slug: {slug}")
+    print(f"feature_branch: {branch}")
+
+
+def cmd_task_branch(args):
+    s = load_settings()
+    name = task_branch_name(args.design, args.task_id, args.task_title, s)
+    print(name)
+
+
+def cmd_tasks(args):
+    # gather from files (source-of-truth for listing)
+    file_tasks = []
+    task_dir = os.path.join("spec", "tasks")
+    if os.path.isdir(task_dir):
+        for name in sorted(os.listdir(task_dir)):
+            if name.endswith(".md"):
+                try:
+                    file_tasks.append(parse_task_file(os.path.join(task_dir, name)))
+                except Exception as e:
+                    print(f"warn: {name}: {e}", file=sys.stderr)
+
+    # optional basic check vs index
+    if args.check:
+        idx_tasks = parse_index_tasks()
+        issues = quick_diff_files_vs_index(file_tasks, idx_tasks)
+        if not issues:
+            print("OK: no inconsistencies found.")
+        else:
+            print("Inconsistencies:")
+            for i in issues:
+                if i["type"] == "missing_in_index":
+                    print(f"- missing_in_index: {i['id']}  ({i['file']})")
+                elif i["type"] == "missing_file":
+                    print(
+                        f"- missing_file: {i['id']}  (index points to {i['index_file']})"
+                    )
+                elif i["type"] == "status_mismatch":
+                    print(
+                        f"- status_mismatch: {i['id']}  file={i['file_status']}  index={i['index_status']}"
+                    )
+        if args.strict and issues:
+            sys.exit(1)
+
+    # filters (apply to what we show)
+    tasks = file_tasks
+    if args.status:
+        want = {
+            s.strip().lower() for s in re.split(r"[,\s]+", args.status) if s.strip()
+        }
+        tasks = [t for t in tasks if (t.get("status") or "").lower() in want]
+    if args.owner:
+        tasks = [
+            t for t in tasks if (t.get("owner") or "").lower() == args.owner.lower()
+        ]
+    if args.grep:
+        pat = args.grep.lower()
+        tasks = [
+            t
+            for t in tasks
+            if pat in (t.get("title") or "").lower() or pat in t["id"].lower()
+        ]
+
+    # outputs
+    if args.count:
+        print(len(tasks))
+        return
+    if args.ids_only:
+        for t in tasks:
+            print(t["id"])
+        return
+    if not tasks:
+        print("No tasks found.")
+        return
+
+    col_id = max([2] + [len(t["id"]) for t in tasks])
+    col_st = max([6] + [len(t.get("status") or "") for t in tasks])
+    col_ow = max([5] + [len(t.get("owner") or "") for t in tasks])
+    header = f"{'ID'.ljust(col_id)}  {'STATUS'.ljust(col_st)}  {'OWNER'.ljust(col_ow)}  TITLE"
+    print(header)
+    print("-" * len(header))
+    for t in tasks:
+        print(
+            f"{t['id'].ljust(col_id)}  {(t.get('status') or '').ljust(col_st)}  {(t.get('owner') or '').ljust(col_ow)}  {t.get('title') or ''}"
+        )
+
+    # --fix delegates to your reindex logic
+    if args.fix:
+        cmd_reindex(args)
 
 
 # ---------- CLI ----------
@@ -634,12 +975,24 @@ Examples:
   # 5) Configure execution & protection
   spec.py config --auto on --loop auto --require-owner on \\
                  --enforce on --protected "main, master, develop" \\
-                 --branch "feat/{id}-{slug}" \\
+                 --feature-branch "feat/{feature_slug}" \\
+                 --feature-bases "main, master, develop" \\
+                 --branch "feat/{feature_slug}/{id}-{slug}" \\
                  --commit-tmpl "{id}: {title}" --pr-title-tmpl "{id}: {title}"
 
   # 6) Rebuild index.yml from existing task files (safe)
   spec.py reindex
+
+    # 7) List tasks & check drift (safe)
+  spec.py tasks                                 # list all from files
+  spec.py tasks --status "todo,doing"           # filter by status
+  spec.py tasks --owner stef --grep route       # filter by owner & substring
+  spec.py tasks --check                         # compare files vs index (read-only)
+  spec.py tasks --check --strict                # fail (exit 1) if drift found (CI-friendly)
+  spec.py tasks --fix                           # sync index from files (same as: spec.py reindex)
+
 """
+
     parser = argparse.ArgumentParser(
         description="Minimal spec system: scaffold once, register design docs, and guide agents for planning/execution.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -653,7 +1006,7 @@ Examples:
     p_init.add_argument(
         "--force",
         action="store_true",
-        help="overwrite helper files (settings.yml, template.task.md, prompts.md, policies.md, START.md, EXECUTE.md). never touches spec/tasks/",
+        help="overwrite helper files (settings.yml, template.task.md, prompts.md, policies.md, PLAN.md, EXECUTE.md). never touches spec/tasks/",
     )
     p_init.add_argument(
         "--force-index",
@@ -698,7 +1051,8 @@ Examples:
         help="require owner before switching a task to 'doing'",
     )
     p_config.add_argument(
-        "--branch", help="branch naming pattern, e.g. 'feat/{id}-{slug}'"
+        "--branch",
+        help="task branch naming pattern, e.g. 'feat/{feature_slug}/{id}-{slug}'",
     )
     p_config.add_argument(
         "--enforce",
@@ -719,12 +1073,76 @@ Examples:
         dest="pr_title_tmpl",
         help="PR title template, e.g. '{id}: {title}'",
     )
+
+    p_config.add_argument(
+        "--feature-branch",
+        dest="feature_branch",
+        help="feature parent branch pattern, e.g. 'feat/{feature_slug}'",
+    )
+    p_config.add_argument(
+        "--feature-bases",
+        dest="feature_bases",
+        help="comma or space separated candidate base branches for the feature branch (first existing wins), e.g. 'main, master, develop'",
+    )
+
     p_config.set_defaults(func=cmd_config)
 
     p_reindex = sub.add_parser(
         "reindex", help="rebuild spec/index.yml from spec/tasks/*.md (safe)"
     )
     p_reindex.set_defaults(func=cmd_reindex)
+
+    p_feature = sub.add_parser(
+        "feature",
+        help="derive feature slug/branch from a design filename or title",
+    )
+    p_feature.add_argument("design", help="design filename or plain title")
+    p_feature.set_defaults(func=cmd_feature)
+
+    p_taskbranch = sub.add_parser(
+        "task-branch",
+        help="render a task branch name for a given ID and title",
+    )
+    p_taskbranch.add_argument(
+        "design", help="design filename or plain title (to derive {feature_slug})"
+    )
+    p_taskbranch.add_argument("task_id", help="task ID, e.g., T-012")
+    p_taskbranch.add_argument("task_title", help="task title to slugify")
+    p_taskbranch.set_defaults(func=cmd_task_branch)
+
+    p_tasks = sub.add_parser(
+        "tasks",
+        help="list tasks from files; --check compares with index; --fix syncs ledger (reindex)",
+    )
+    p_tasks.add_argument(
+        "--status", help="filter by status, e.g. 'todo' or 'todo,doing'"
+    )
+    p_tasks.add_argument("--owner", help="filter by owner (exact match)")
+    p_tasks.add_argument(
+        "--grep", help="substring match against id/title (case-insensitive)"
+    )
+    p_tasks.add_argument(
+        "--check",
+        action="store_true",
+        help="compare files vs index and report basic inconsistencies",
+    )
+    p_tasks.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 1 if --check finds inconsistencies (CI-friendly)",
+    )
+    p_tasks.add_argument(
+        "--count", action="store_true", help="print only the number of matching tasks"
+    )
+    p_tasks.add_argument(
+        "--ids-only", action="store_true", help="print only task IDs (one per line)"
+    )
+    p_tasks.add_argument(
+        "--fix",
+        action="store_true",
+        help="rewrite spec/index.yml from files (same as reindex)",
+    )
+    p_tasks.set_defaults(func=cmd_tasks)
 
     args = parser.parse_args()
     args.func(args)
